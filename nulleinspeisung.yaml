@@ -40,7 +40,7 @@ blueprint:
     deadband:
       name: Totzone / Hysterese (Watt)
       description: >
-        Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs (z.B. 20W). 
+        Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs. 
         Verhindert, dass die Batterie bei kleinsten Änderungen sofort nachregelt.
       default: 20
       selector:
@@ -70,7 +70,7 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für Stabilität: 0.1 bis 0.3.
+      description: Empfehlung für Stabilität zwischen 0.1 und 0.3.
       default: 0.2
       selector:
         number:
@@ -80,6 +80,7 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
+      description: Wie oft soll der Wert gesendet werden (1 bis 15s).
       default: 3
       selector:
         number:
@@ -129,35 +130,4 @@ action:
     data:
       value: >
         {% set grid_p = states(grid_ent) | float(0) %}
-        {% set current_soc = states(soc_ent) | float(0) %}
-        {% set current_limit = states(limit_ent) | float(0) %}
-        {% set max_chg = chg_val | float * -1 %}
-        {% set max_dis = dis_val | float %}
-        {% set gain = gain_val | float %}
-        {% set deadband = deadband_val | float %}
-        
-        {# Totzone Logik: Wenn der Netzbezug klein ist, tun wir nichts #}
-        {% if grid_p | abs < deadband %}
-          {% set correction = 0 %}
-        {% else %}
-          {# Wir ziehen die Totzone von der Korrektur ab, um sanfter einzusteigen #}
-          {% set effective_grid = grid_p - (deadband if grid_p > 0 else -deadband) %}
-          {% set correction = effective_grid * gain %}
-        {% endif %}
-        
-        {% set raw_limit = (current_limit + correction) | round(1) %}
-        
-        {# SoC Schutz #}
-        {% if current_soc <= min_soc_val | float %}
-          {% set raw_limit = [0, raw_limit] | min %}
-        {% endif %}
-        
-        {# Grenzen einhalten #}
-        {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
-        
-        {# Watchdog-Trick #}
-        {% if (limited - current_limit) | abs < 0.1 %}
-          {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
-        {% else %}
-          {{ limited | round(1) }}
-        {% endif %}
+        {% set current_soc = states(soc_ent)
