@@ -54,6 +54,7 @@ blueprint:
           max: 1.0
           step: 0.05
           mode: slider
+          unit_of_measurement: "%"
 
 mode: restart
 
@@ -61,10 +62,9 @@ trigger:
   - platform: state
     entity_id: !input grid_sensor
   - platform: time_pattern
-    seconds: "/5" # Schneller Zyklus für präzise Regelung
+    seconds: "/5"
 
 variables:
-  # Zuweisung der Inputs an Variablen
   grid_ent: !input grid_sensor
   limit_ent: !input battery_power_limit_number
   chg_val: !input max_charge_power
@@ -72,14 +72,12 @@ variables:
   gain_val: !input control_gain
 
 action:
-  # 1. Modus auf 'mqtt_ctrl' erzwingen (Watchdog-Funktion)
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
-  # 2. Gedämpften Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
@@ -91,14 +89,11 @@ action:
         {% set max_dis = dis_val | float %}
         {% set gain = gain_val | float %}
         
-        {# Wir korrigieren nur einen Teil der Abweichung basierend auf dem Regler #}
         {% set correction = grid_p * gain %}
         {% set raw_limit = (current_limit + correction) | round(1) %}
         
-        {# Grenzen einhalten #}
         {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
         
-        {# Watchdog-Trick: Immer eine minimale Änderung erzwingen, falls der Wert stagniert #}
         {% if (limited - current_limit) | abs < 0.1 %}
           {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
         {% else %}
