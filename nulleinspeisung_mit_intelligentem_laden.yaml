@@ -1,0 +1,204 @@
+blueprint:
+  name: Nulleinspeisung MS-A2 (Smart Tibber & SoC Schutz)
+  description: >
+    Nulleinspeisung mit intelligentem Laden über Tibber. 
+    Lädt den Akku aus dem Netz, wenn der Preis niedrig ist UND die PV-Prognose für morgen gering ist.
+  domain: automation
+  input:
+    grid_sensor:
+      name: Netz-Sensor (Watt)
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    battery_soc_sensor:
+      name: Batterie Ladestand (SoC %)
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+    min_soc:
+      name: Minimum SoC (%)
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
+    battery_mode_select:
+      name: MS-A2 Modus Entität
+      selector:
+        entity:
+          domain: select
+    battery_power_limit_number:
+      name: MS-A2 Leistungs-Limit
+      selector:
+        entity:
+          domain: number
+    # --- TIBBER & PROGNOSE SEKTION ---
+    enable_smart_charging:
+      name: Intelligentes Laden aktivieren
+      default: false
+      selector:
+        boolean:
+    tibber_price_sensor:
+      name: Tibber Strompreis Sensor
+      description: Der Sensor, der den aktuellen Strompreis anzeigt.
+      selector:
+        entity:
+          domain: sensor
+          device_class: monetary
+    price_threshold:
+      name: Preis-Schwellenwert (Laden)
+      description: Wenn der Preis unter diesen Wert fällt, wird geladen (z.B. 0.20).
+      default: 0.20
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.01
+          unit_of_measurement: "€/kWh"
+          mode: box
+    pv_forecast_sensor:
+      name: PV Prognose Sensor (Morgen)
+      description: Sensor für die erwartete Energie morgen (z.B. Solcast oder HA Forecast).
+      selector:
+        entity:
+          domain: sensor
+          device_class: energy
+    pv_threshold:
+      name: PV Prognose Schwelle (kWh)
+      description: Nur laden, wenn die Prognose für morgen UNTER diesem Wert liegt.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 50
+          unit_of_measurement: "kWh"
+          mode: slider
+    smart_charge_power:
+      name: Netz-Ladeleistung (Watt)
+      description: Mit wie viel Watt soll aus dem Netz geladen werden? (Negativer Wert, z.B. -500).
+      default: -500
+      selector:
+        number:
+          min: -2000
+          max: 0
+          unit_of_measurement: W
+          mode: box
+    # --- STANDARD REGELUNG ---
+    max_charge_power:
+      name: Max Ladeleistung (Watt)
+      default: 800
+      selector:
+        number:
+          min: 0
+          max: 2000
+          unit_of_measurement: W
+    max_discharge_power:
+      name: Max Entladeleistung (Watt)
+      default: 800
+      selector:
+        number:
+          min: 0
+          max: 2000
+          unit_of_measurement: W
+    control_gain:
+      name: Dämpfungsfaktor (Regler)
+      default: 0.2
+      selector:
+        number:
+          min: 0.05
+          max: 1.0
+          step: 0.05
+          mode: slider
+    update_interval:
+      name: Regel-Intervall (Sekunden)
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          unit_of_measurement: s
+          mode: slider
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input grid_sensor
+  - platform: time_pattern
+    seconds: "/1"
+
+variables:
+  grid_ent: !input grid_sensor
+  soc_ent: !input battery_soc_sensor
+  limit_ent: !input battery_power_limit_number
+  chg_val: !input max_charge_power
+  dis_val: !input max_discharge_power
+  gain_val: !input control_gain
+  interval_val: !input update_interval
+  min_soc_val: !input min_soc
+  # Smart Charging Variablen
+  smart_enabled: !input enable_smart_charging
+  tibber_ent: !input tibber_price_sensor
+  price_limit: !input price_threshold
+  pv_ent: !input pv_forecast_sensor
+  pv_limit: !input pv_threshold
+  charge_pwr: !input smart_charge_power
+
+action:
+  - condition: template
+    value_template: >
+      {% set last_run = state_attr('automation.' ~ this.entity_id, 'last_triggered') %}
+      {{ last_run is none or (now() - last_run).total_seconds() >= interval_val | float }}
+
+  - action: select.select_option
+    target:
+      entity_id: !input battery_mode_select
+    data:
+      option: "mqtt_ctrl"
+
+  - action: number.set_value
+    target:
+      entity_id: !input battery_power_limit_number
+    data:
+      value: >
+        {% set grid_p = states(grid_ent) | float(0) %}
+        {% set current_soc = states(soc_ent) | float(0) %}
+        {% set current_limit = states(limit_ent) | float(0) %}
+        {% set max_chg = chg_val | float * -1 %}
+        {% set max_dis = dis_val | float %}
+        {% set gain = gain_val | float %}
+        {% set min_soc = min_soc_val | float %}
+        
+        {# Smart Charging Logik #}
+        {% set current_price = states(tibber_ent) | float(99) %}
+        {% set forecast_tomorrow = states(pv_ent) | float(0) %}
+        {% set is_cheap = smart_enabled and current_price <= price_limit and forecast_tomorrow <= pv_limit %}
+        
+        {% if is_cheap and current_soc < 95 %}
+          {# Wenn billig und Akku nicht voll: Ladebefehl erzwingen #}
+          {% set raw_limit = charge_pwr | float %}
+        {% else %}
+          {# Normale Nulleinspeisung #}
+          {% set correction = grid_p * gain %}
+          {% set raw_limit = (current_limit + correction) | round(1) %}
+          
+          {# SoC Schutz #}
+          {% if current_soc <= min_soc %}
+            {% set raw_limit = [0, raw_limit] | min %}
+          {% endif %}
+        {% endif %}
+        
+        {# Grenzen einhalten #}
+        {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
+        
+        {# Watchdog #}
+        {% if (limited - current_limit) | abs < 0.1 %}
+          {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
+        {% else %}
+          {{ limited | round(1) }}
+        {% endif %}
