@@ -50,23 +50,22 @@ trigger:
     seconds: "/30"
 
 variables:
-  # Das ist der Trick: Nur die Entitäts-IDs als Strings speichern
+  # Zuweisung der Inputs an Variablen für die Verwendung in Templates
   grid_ent: !input grid_sensor
   limit_ent: !input battery_power_limit_number
-  # Zahlenwerte direkt als Variable speichern
   chg_val: !input max_charge_power
   dis_val: !input max_discharge_power
 
 action:
   # 1. Modus auf 'mqtt_ctrl' erzwingen
-  - service: select.select_option
+  - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
   # 2. Wert berechnen und senden
-  - service: number.set_value
+  - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
     data:
