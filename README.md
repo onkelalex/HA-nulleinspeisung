@@ -1,56 +1,81 @@
-# MS-A2 Zero Export Control (High-Speed & SoC Protection)
+# MS-A2 Zero Export Control (Ultra-Stable Edition)
 
-A **Home Assistant Blueprint** for precise **zero export control** of the **Hoymiles MS-A2 battery system**.
+A **Home Assistant Blueprint** for highly stable **zero export control** of the **Hoymiles MS-A2 battery system**.
 
-The automation dynamically adjusts the battery charge/discharge power to keep the grid power around **0 W** while protecting the battery from **deep discharge using a configurable SoC limit**.
+This version focuses on **maximum stability** by introducing:
 
-Designed for **fast response and stable regulation** in combination with **Tibber Pulse, smart meters, or other real-time grid sensors**.
+- a configurable **deadband (hysteresis)**
+- a **damped control loop**
+- protection against **battery deep discharge**
+
+The deadband prevents the controller from reacting to very small grid fluctuations, which significantly reduces oscillation and unnecessary inverter updates.
 
 ---
 
 # Features
 
-✔ High-speed grid regulation  
-✔ Keeps grid import/export close to **0 W**  
-✔ Adjustable **control loop interval**  
+✔ Ultra-stable grid regulation  
+✔ Configurable **deadband / hysteresis**  
+✔ Adjustable **control gain**  
+✔ Adjustable **update interval**  
 ✔ **SoC protection** to prevent deep discharge  
 ✔ Configurable **charge and discharge limits**  
-✔ Built-in **watchdog mechanism** to keep the inverter responsive  
-✔ Compatible with **MQTT-controlled MS-A2 setups**
+✔ Built-in **watchdog update mechanism**  
+✔ Designed for **MQTT-controlled MS-A2 setups**
 
 ---
 
 # How it Works
 
-The automation continuously monitors the **grid power sensor** and adjusts the battery power limit accordingly.
+The automation continuously monitors the **grid power sensor** and adjusts the battery charge or discharge power accordingly.
 
-Core control logic:
+Core control flow:
 
 1. Read current **grid power**
-2. Calculate a **correction value** using a configurable gain
-3. Adjust the **battery power limit**
-4. Enforce:
-   - charge limits
-   - discharge limits
-   - minimum battery SoC
-5. Send the updated limit to the **MS-A2 controller**
+2. Ignore small fluctuations within the **deadband**
+3. Apply a **damped correction factor**
+4. Adjust the **battery power limit**
+5. Enforce limits:
+   - charge power
+   - discharge power
+   - minimum SoC
+6. Send the updated limit to the **MS-A2 controller**
 
-This keeps the house consumption balanced without exporting energy to the grid.
+This keeps the grid flow close to **0 W** while maintaining smooth battery behaviour.
+
+---
+
+# Deadband (Hysteresis)
+
+A **deadband** prevents the controller from reacting to tiny grid fluctuations.
+
+Example:
+
+Deadband = `20 W`
+
+| Grid Power | Controller Reaction |
+|-------------|--------------------|
+| 10 W | ignored |
+| -15 W | ignored |
+| 25 W | regulation starts |
+| -40 W | regulation starts |
+
+This dramatically reduces **oscillation and inverter chatter**.
 
 ---
 
 # Requirements
 
-You need the following entities in Home Assistant:
+You need the following entities in Home Assistant.
 
 | Entity | Description |
 |------|------|
-| Grid Power Sensor | Measures current grid import/export in watts |
-| Battery SoC Sensor | Battery state of charge (%) |
+| Grid Power Sensor | Measures grid import/export power |
+| Battery SoC Sensor | Battery charge level (%) |
 | MS-A2 Mode Select | Select entity controlling MS-A2 mode |
 | MS-A2 Power Limit | Number entity controlling power |
 
-Typical setups use:
+Typical integrations used with this blueprint:
 
 - Tibber Pulse
 - Smart meter integrations
