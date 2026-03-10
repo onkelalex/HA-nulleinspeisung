@@ -13,14 +13,14 @@ blueprint:
           device_class: power
     battery_soc_sensor:
       name: Batterie Ladestand (SoC %)
-      description: Der Sensor, der den aktuellen Ladestand in Prozent anzeigt.
+      description: Der Sensor für den aktuellen Ladestand in Prozent.
       selector:
         entity:
           domain: sensor
           device_class: battery
     min_soc:
       name: Minimum SoC (%)
-      description: Unter diesem Wert wird die Entladung gestoppt (0W).
+      description: Unter diesem Wert wird die Entladung gestoppt.
       default: 10
       selector:
         number:
@@ -59,6 +59,7 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
+      description: Empfehlung für schnelles Intervall zwischen 0.1 und 0.2.
       default: 0.2
       selector:
         number:
@@ -68,6 +69,7 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
+      description: Wie oft soll der Wert gesendet werden (1 bis 15s).
       default: 2
       selector:
         number:
