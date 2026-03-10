@@ -1,9 +1,8 @@
 blueprint:
-  name: Nulleinspeisung MS-A2 (High-Speed & Sanft)
+  name: Nulleinspeisung MS-A2 (High-Speed & SoC Schutz)
   description: >
-    Präzise Nulleinspeisung für den MS-A2. 
-    Intervall begrenzt auf 1-15 Sekunden für optimale Reaktionszeit.
-    Tipp: Bei schnellen Intervallen (1-3s) den Dämpfungsfaktor niedrig einstellen (0.1 - 0.2).
+    Präzise Nulleinspeisung für den MS-A2 mit SoC-Schutz. 
+    Verhindert das Entladen unter einen einstellbaren Prozentwert.
   domain: automation
   input:
     grid_sensor:
@@ -12,6 +11,13 @@ blueprint:
         entity:
           domain: sensor
           device_class: power
+    battery_soc_sensor:
+      name: Batterie Ladestand (SoC %)
+      description: Der Sensor, der den aktuellen Ladestand in Prozent anzeigt.
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
     battery_mode_select:
       name: MS-A2 Modus Entität
       selector:
@@ -22,6 +28,16 @@ blueprint:
       selector:
         entity:
           domain: number
+    min_soc:
+      name: Minimum SoC (%)
+      description: Unter diesem Wert wird die Entladung gestoppt (0W). Laden ist weiterhin möglich.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+          mode: slider
     max_charge_power:
       name: Max Ladeleistung (Watt)
       default: 800
@@ -42,9 +58,7 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: >
-        Wie viel % der Abweichung pro Schritt korrigiert wird. 
-        Empfehlung für schnelles Intervall: 0.1 bis 0.2.
+      description: Empfehlung für schnelles Intervall: 0.1 bis 0.2.
       default: 0.2
       selector:
         number:
@@ -54,7 +68,7 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Wie oft soll der Wert gesendet werden? (Begrenzt auf 1-15s).
+      description: Wie oft soll der Wert gesendet werden? (1-15s).
       default: 2
       selector:
         number:
@@ -74,11 +88,13 @@ trigger:
 
 variables:
   grid_ent: !input grid_sensor
+  soc_ent: !input battery_soc_sensor
   limit_ent: !input battery_power_limit_number
   chg_val: !input max_charge_power
   dis_val: !input max_discharge_power
   gain_val: !input control_gain
   interval_val: !input update_interval
+  min_soc_val: !input min_soc
 
 action:
   # Prüfen, ob das Intervall abgelaufen ist
@@ -87,7 +103,7 @@ action:
       {% set last_run = state_attr('automation.' ~ this.entity_id, 'last_triggered') %}
       {{ last_run is none or (now() - last_run).total_seconds() >= interval_val | float }}
 
-  # 1. Modus auf 'mqtt_ctrl' erzwingen (Watchdog)
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
@@ -101,19 +117,27 @@ action:
     data:
       value: >
         {% set grid_p = states(grid_ent) | float(0) %}
+        {% set current_soc = states(soc_ent) | float(0) %}
         {% set current_limit = states(limit_ent) | float(0) %}
         {% set max_chg = chg_val | float * -1 %}
         {% set max_dis = dis_val | float %}
         {% set gain = gain_val | float %}
+        {% set min_soc = min_soc_val | float %}
         
-        {# Sanfte Korrektur basierend auf dem Gain #}
+        {# Sanfte Korrektur #}
         {% set correction = grid_p * gain %}
         {% set raw_limit = (current_limit + correction) | round(1) %}
+        
+        {# SoC Schutz Logik #}
+        {# Wenn SoC zu niedrig, darf das Limit nicht positiv (Entladen) sein #}
+        {% if current_soc <= min_soc %}
+          {% set raw_limit = [0, raw_limit] | min %}
+        {% endif %}
         
         {# Grenzen einhalten #}
         {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
         
-        {# Watchdog-Trick: Immer eine minimale Änderung erzwingen #}
+        {# Watchdog-Trick #}
         {% if (limited - current_limit) | abs < 0.1 %}
           {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
         {% else %}
