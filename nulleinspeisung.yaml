@@ -1,5 +1,5 @@
 blueprint:
-  name: Nulleinspeisung MS-A2
+  name: Nulleinspeisung MS-A2 (Ultra-Stable & Slider)
   description: >
     Maximale Stabilität durch einstellbare Totzone (Hysterese) und gedämpfte Regelung. 
     Verhindert nervöses Hin- und Herspringen bei kleinen Lastwechseln.
@@ -97,11 +97,9 @@ trigger:
     seconds: "/1"
 
 variables:
-  # Alle Inputs sicher in Variablen laden
   grid_ent: !input grid_sensor
   soc_ent: !input battery_soc_sensor
   limit_ent: !input battery_power_limit_number
-  mode_ent: !input battery_mode_select
   chg_val: !input max_charge_power
   dis_val: !input max_discharge_power
   gain_val: !input control_gain
@@ -110,25 +108,22 @@ variables:
   deadband_val: !input deadband
 
 action:
-  # Prüfen, ob das Intervall abgelaufen ist
   - condition: template
     value_template: >
       {% set last_run = state_attr('automation.' ~ this.entity_id, 'last_triggered') %}
       {{ last_run is none or (now() - last_run).total_seconds() >= interval_val | float }}
 
-  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
-  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
     data:
-      value: >
+      value: >-
         {% set grid_p = states(grid_ent) | float(0) %}
         {% set current_soc = states(soc_ent) | float(0) %}
         {% set current_limit = states(limit_ent) | float(0) %}
@@ -137,26 +132,17 @@ action:
         {% set gain = gain_val | float %}
         {% set deadband = deadband_val | float %}
         {% set min_soc = min_soc_val | float %}
-        
-        {# Totzone Logik #}
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
           {% set effective_grid = grid_p - (deadband if grid_p > 0 else -deadband) %}
           {% set correction = effective_grid * gain %}
         {% endif %}
-        
         {% set raw_limit = (current_limit + correction) | round(1) %}
-        
-        {# SoC Schutz #}
         {% if current_soc <= min_soc %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
-        
-        {# Grenzen einhalten #}
         {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
-        
-        {# Watchdog-Trick #}
         {% if (limited - current_limit) | abs < 0.1 %}
           {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
         {% else %}
