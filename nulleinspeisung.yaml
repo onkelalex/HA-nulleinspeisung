@@ -47,37 +47,40 @@ trigger:
   - platform: state
     entity_id: !input grid_sensor
   - platform: time_pattern
-    seconds: "/30" # Watchdog: Sendet spätestens alle 30s, um 'mqtt_ctrl' zu halten
+    seconds: "/30"
 
 variables:
-  grid_p: "{{ states(grid_sensor) | float(0) }}"
-  current_limit: "{{ states(battery_power_limit_number) | float(0) }}"
-  max_chg: "{{ ( !input max_charge_power ) * -1 }}"
-  max_dis: !input max_discharge_power
+  # Hier weisen wir die Inputs erst einfachen Variablen zu, um das '!' Problem zu umgehen
+  grid_sensor_entity: !input grid_sensor
+  limit_entity: !input battery_power_limit_number
+  max_chg_input: !input max_charge_power
+  max_dis_input: !input max_discharge_power
+  
+  # Jetzt nutzen wir diese Variablen in den Berechnungen
+  grid_p: "{{ states(grid_sensor_entity) | float(0) }}"
+  current_limit: "{{ states(limit_entity) | float(0) }}"
+  max_chg: "{{ max_chg_input | float * -1 }}"
+  max_dis: "{{ max_dis_input | float }}"
   
   # Berechnung des neuen Limits
   raw_limit: "{{ (current_limit + grid_p) | round(1) }}"
   
-  # Begrenzung und Watchdog-Trick: 
-  # Wir addieren eine winzige Nuance (0.1), falls der Wert gleich bleibt, 
-  # damit der MS-A2 eine "Änderung" sieht und den Timeout zurücksetzt.
+  # Watchdog-Logik: Wert minimal ändern, um den MS-A2 Timer zu resetten
   final_limit: >
     {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
-    {% if limited == current_limit %}
+    {% if (limited - current_limit) | abs < 0.1 %}
       {{ (limited + 0.1) if limited < max_dis else (limited - 0.1) }}
     {% else %}
       {{ limited }}
     {% endif %}
 
 action:
-  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - service: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
-  # 2. Wert an die Batterie senden
   - service: number.set_value
     target:
       entity_id: !input battery_power_limit_number
