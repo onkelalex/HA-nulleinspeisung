@@ -1,8 +1,8 @@
 blueprint:
-  name: Nulleinspeisung MS-A2 (High-Speed & SoC Schutz)
+  name: Nulleinspeisung MS-A2 (Ultra-Stable & Slider)
   description: >
-    Präzise Nulleinspeisung für den MS-A2 mit SoC-Schutz. 
-    Verhindert das Entladen unter einen einstellbaren Prozentwert.
+    Maximale Stabilität durch einstellbare Totzone (Hysterese) und gedämpfte Regelung. 
+    Verhindert nervöses Hin- und Herspringen bei kleinen Lastwechseln.
   domain: automation
   input:
     grid_sensor:
@@ -13,14 +13,12 @@ blueprint:
           device_class: power
     battery_soc_sensor:
       name: Batterie Ladestand (SoC %)
-      description: Der Sensor für den aktuellen Ladestand in Prozent.
       selector:
         entity:
           domain: sensor
           device_class: battery
     min_soc:
       name: Minimum SoC (%)
-      description: Unter diesem Wert wird die Entladung gestoppt.
       default: 10
       selector:
         number:
@@ -39,6 +37,19 @@ blueprint:
       selector:
         entity:
           domain: number
+    deadband:
+      name: Totzone / Hysterese (Watt)
+      description: >
+        Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs (z.B. 20W). 
+        Verhindert, dass die Batterie bei kleinsten Änderungen sofort nachregelt.
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: W
+          mode: slider
     max_charge_power:
       name: Max Ladeleistung (Watt)
       default: 800
@@ -59,7 +70,7 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für schnelles Intervall zwischen 0.1 und 0.2.
+      description: Empfehlung für Stabilität: 0.1 bis 0.3.
       default: 0.2
       selector:
         number:
@@ -69,8 +80,7 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Wie oft soll der Wert gesendet werden (1 bis 15s).
-      default: 2
+      default: 3
       selector:
         number:
           min: 1
@@ -96,6 +106,7 @@ variables:
   gain_val: !input control_gain
   interval_val: !input update_interval
   min_soc_val: !input min_soc
+  deadband_val: !input deadband
 
 action:
   # Prüfen, ob das Intervall abgelaufen ist
@@ -123,14 +134,21 @@ action:
         {% set max_chg = chg_val | float * -1 %}
         {% set max_dis = dis_val | float %}
         {% set gain = gain_val | float %}
-        {% set min_soc = min_soc_val | float %}
+        {% set deadband = deadband_val | float %}
         
-        {# Sanfte Korrektur #}
-        {% set correction = grid_p * gain %}
+        {# Totzone Logik: Wenn der Netzbezug klein ist, tun wir nichts #}
+        {% if grid_p | abs < deadband %}
+          {% set correction = 0 %}
+        {% else %}
+          {# Wir ziehen die Totzone von der Korrektur ab, um sanfter einzusteigen #}
+          {% set effective_grid = grid_p - (deadband if grid_p > 0 else -deadband) %}
+          {% set correction = effective_grid * gain %}
+        {% endif %}
+        
         {% set raw_limit = (current_limit + correction) | round(1) %}
         
-        {# SoC Schutz Logik #}
-        {% if current_soc <= min_soc %}
+        {# SoC Schutz #}
+        {% if current_soc <= min_soc_val | float %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
