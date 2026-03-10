@@ -85,4 +85,27 @@ action:
     target:
       entity_id: !input battery_power_limit_number
     data:
+      value: >
+        {% set grid_p = states(grid_ent) | float(0) %}
+        {% set current_limit = states(limit_ent) | float(0) %}
+        {% set max_chg = chg_val | float * -1 %}
+        {% set max_dis = dis_val | float %}
+        {% set raw_limit = (current_limit + grid_p) | round(1) %}
+        {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
+        {% if (limited - current_limit) | abs < 0.1 %}
+          {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
+        {% else %}
+          {{ limited | round(1) }}
+        {% endif %}
+    # Das ist der korrekte Weg, Inputs in Actions zu nutzen:
+    variables:
+      grid_ent: !input grid_sensor
+      limit_ent: !input battery_power_limit_number
+      chg_val: !input max_charge_power
+      dis_val: !input max_discharge_power
+
+  - service: number.set_value
+    target:
+      entity_id: !input battery_power_limit_number
+    data:
       value: "{{ final_limit | float }}"
