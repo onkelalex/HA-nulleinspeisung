@@ -1,57 +1,44 @@
 blueprint:
-  name: Nulleinspeisung AC-System (PV + Batterie getrennt)
+  name: Nulleinspeisung MS-A2 (MQTT Watchdog)
   description: >
-    Regelt eine Batterie (z.B. Hoymiles MS-A2 via MQTT) so, dass der Netzbezug/Einspeisung 
-    bei 0W liegt. Die PV-Wechselrichter speisen unabhängig ins Netz ein.
+    Spezielle Nulleinspeisung für Hoymiles MS-A2. Hält den Modus 'mqtt_ctrl' aktiv,
+    indem alle 30 Sekunden ein Wert gesendet wird.
   domain: automation
   input:
     grid_sensor:
       name: Netz-Sensor (Watt)
-      description: Sensor am Hausanschluss. Positiv = Bezug, Negativ = Einspeisung.
+      description: Positiv = Bezug, Negativ = Einspeisung.
       selector:
         entity:
           domain: sensor
           device_class: power
-    battery_control_switch:
-      name: Batterie Modus Schalter
-      description: Der Schalter, um den MS-A2 in den 'ctrl' (Control) Modus zu versetzen.
+    battery_mode_select:
+      name: MS-A2 Modus Entität
+      description: Die 'select' Entität für den EMS-Modus (general, mqtt_ctrl, tou_plan).
       selector:
         entity:
           domain: select
     battery_power_limit_number:
-      name: Batterie Leistungs-Limit (Watt)
-      description: Die Entität (MQTT Number), die die Watt-Vorgabe der Batterie steuert.
+      name: MS-A2 Leistungs-Limit
+      description: Die 'number' Entität für das Watt-Limit (power_ctrl/set).
       selector:
         entity:
-          domain:
-            - number
-            - input_number
+          domain: number
     max_charge_power:
-      name: Maximale Ladeleistung (Watt)
-      description: Wie viel Watt darf die Batterie maximal aufnehmen? (Eingabe als positiver Wert, z.B. 800)
+      name: Max Ladeleistung (Watt)
       default: 800
       selector:
         number:
           min: 0
-          max: 3000
+          max: 2000
           unit_of_measurement: W
     max_discharge_power:
-      name: Maximale Entladeleistung (Watt)
-      description: Wie viel Watt darf die Batterie maximal abgeben? (z.B. 800)
+      name: Max Entladeleistung (Watt)
       default: 800
       selector:
         number:
           min: 0
-          max: 3000
-          unit_of_measurement: W
-    deadband:
-      name: Totzone (Watt)
-      description: Regelung erst ab einer Abweichung von X Watt (verhindert ständiges Hin- und Herregeln).
-      default: 10
-      selector:
-        number:
-          min: 0
-          max: 50
+          max: 2000
           unit_of_measurement: W
 
 mode: restart
@@ -60,44 +47,39 @@ trigger:
   - platform: state
     entity_id: !input grid_sensor
   - platform: time_pattern
-    seconds: "/5" # Schnelle Regelung für AC-Systeme empfohlen
+    seconds: "/30" # Watchdog: Sendet spätestens alle 30s, um 'mqtt_ctrl' zu halten
 
 variables:
   grid_p: "{{ states(grid_sensor) | float(0) }}"
   current_limit: "{{ states(battery_power_limit_number) | float(0) }}"
-  max_chg: "{{ ( !input max_charge_power ) * -1 }}" # Umwandlung in Negativwert für Laden
+  max_chg: "{{ ( !input max_charge_power ) * -1 }}"
   max_dis: !input max_discharge_power
-  dead: !input deadband
   
-  # Die Magie: Neues Limit = Altes Limit + Netzabweichung
-  # Wenn grid_p = -300 (Einspeisung), sinkt das Limit (Laden).
-  # Wenn grid_p = +500 (Bezug), steigt das Limit (Entladen).
-  raw_new_limit: "{{ (current_limit + grid_p) | round(0) }}"
+  # Berechnung des neuen Limits
+  raw_limit: "{{ (current_limit + grid_p) | round(1) }}"
   
-  # Begrenzung auf die eingestellten Max-Werte
-  final_limit: "{{ ([max_chg, ([max_dis, raw_new_limit] | min)] | max) }}"
+  # Begrenzung und Watchdog-Trick: 
+  # Wir addieren eine winzige Nuance (0.1), falls der Wert gleich bleibt, 
+  # damit der MS-A2 eine "Änderung" sieht und den Timeout zurücksetzt.
+  final_limit: >
+    {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
+    {% if limited == current_limit %}
+      {{ (limited + 0.1) if limited < max_dis else (limited - 0.1) }}
+    {% else %}
+      {{ limited }}
+    {% endif %}
 
 action:
-  # 1. Sicherstellen, dass der Modus auf 'ctrl' steht (Hoymiles MS-A2 Anforderung)
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ states(battery_control_switch) != 'ctrl' }}"
-        sequence:
-          - service: select.select_option
-            target:
-              entity_id: !input battery_control_switch
-            data:
-              option: "ctrl"
-    default: []
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
+  - service: select.select_option
+    target:
+      entity_id: !input battery_mode_select
+    data:
+      option: "mqtt_ctrl"
 
-  # 2. Nur regeln, wenn die Abweichung außerhalb der Totzone liegt
-  - condition: template
-    value_template: "{{ (grid_p | abs) > dead }}"
-
-  # 3. Das neue Limit an die Batterie senden
+  # 2. Wert an die Batterie senden
   - service: number.set_value
     target:
       entity_id: !input battery_power_limit_number
     data:
-      value: "{{ final_limit }}"
+      value: "{{ final_limit | float }}"
