@@ -29,6 +29,7 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     max_discharge_power:
       name: Max Entladeleistung (Watt)
       default: 800
@@ -37,6 +38,7 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
       description: 1.0 = 100% Korrektur, 0.5 = 50% Korrektur pro Schritt.
@@ -49,12 +51,13 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Wie oft soll der Wert gesendet werden? (1s = sehr schnell, 30s = langsam).
+      description: Wie oft soll der Wert gesendet werden? (1s = sehr schnell, 60s = langsam).
       default: 5
       selector:
         number:
           min: 1
           max: 60
+          step: 1
           unit_of_measurement: s
           mode: slider
 
@@ -64,7 +67,7 @@ trigger:
   - platform: state
     entity_id: !input grid_sensor
   - platform: time_pattern
-    seconds: "/1" # Wir triggern jede Sekunde für maximale Flexibilität
+    seconds: "/1"
 
 variables:
   grid_ent: !input grid_sensor
@@ -72,13 +75,14 @@ variables:
   chg_val: !input max_charge_power
   dis_val: !input max_discharge_power
   gain_val: !input control_gain
-  interval: !input update_interval
+  interval_val: !input update_interval
 
 action:
   # Prüfen, ob das Intervall seit dem letzten Lauf abgelaufen ist
   - condition: template
     value_template: >
-      {{ (now() - state_attr('automation.' ~ this.entity_id, 'last_triggered') | default(as_datetime(0), true)).total_seconds() >= interval | float }}
+      {% set last_run = state_attr('automation.' ~ this.entity_id, 'last_triggered') %}
+      {{ last_run is none or (now() - last_run).total_seconds() >= interval_val | float }}
 
   # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
@@ -104,7 +108,6 @@ action:
         
         {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
         
-        {# Watchdog: Immer eine minimale Änderung erzwingen #}
         {% if (limited - current_limit) | abs < 0.1 %}
           {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
         {% else %}
