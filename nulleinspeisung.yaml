@@ -18,6 +18,17 @@ blueprint:
         entity:
           domain: sensor
           device_class: battery
+    min_soc:
+      name: Minimum SoC (%)
+      description: Unter diesem Wert wird die Entladung gestoppt (0W).
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
     battery_mode_select:
       name: MS-A2 Modus Entität
       selector:
@@ -28,16 +39,6 @@ blueprint:
       selector:
         entity:
           domain: number
-    min_soc:
-      name: Minimum SoC (%)
-      description: Unter diesem Wert wird die Entladung gestoppt (0W). Laden ist weiterhin möglich.
-      default: 10
-      selector:
-        number:
-          min: 0
-          max: 100
-          unit_of_measurement: "%"
-          mode: slider
     max_charge_power:
       name: Max Ladeleistung (Watt)
       default: 800
@@ -58,7 +59,6 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für schnelles Intervall: 0.1 bis 0.2.
       default: 0.2
       selector:
         number:
@@ -68,7 +68,6 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Wie oft soll der Wert gesendet werden? (1-15s).
       default: 2
       selector:
         number:
@@ -129,7 +128,6 @@ action:
         {% set raw_limit = (current_limit + correction) | round(1) %}
         
         {# SoC Schutz Logik #}
-        {# Wenn SoC zu niedrig, darf das Limit nicht positiv (Entladen) sein #}
         {% if current_soc <= min_soc %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
