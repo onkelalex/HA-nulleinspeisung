@@ -1,4 +1,4 @@
-# MS-A2 Zero Export Control (Ultra-Stable Edition)
+# MS-A2 Zero Export Control 
 
 A **Home Assistant Blueprint** for highly stable **zero export control** of the **Hoymiles MS-A2 battery system**.
 
