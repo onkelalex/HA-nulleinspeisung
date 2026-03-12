@@ -2,7 +2,7 @@ blueprint:
   name: Nulleinspeisung MS-A2
   description: >
     Präzise Nulleinspeisung für den MS-A2 mit Intervall-Garantie und Ganzzahl-Glättung. 
-    Version-ID: 202603121429
+    Version-ID 202603121429
   domain: automation
   input:
     grid_sensor:
