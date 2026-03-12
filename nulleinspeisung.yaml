@@ -1,8 +1,8 @@
 blueprint:
-  name: Nulleinspeisung MS-A2 (Ultra-Stable & Intervall-Fix)
+  name: Nulleinspeisung MS-A2 (Intervall-Garantie)
   description: >
     Präzise Nulleinspeisung für den MS-A2. 
-    Hält das eingestellte Intervall nun garantiert ein.
+    Diese Version garantiert die Einhaltung des Sende-Intervalls.
   domain: automation
   input:
     grid_sensor:
@@ -85,11 +85,11 @@ blueprint:
           unit_of_measurement: s
           mode: slider
 
-mode: restart
+# WICHTIG: 'single' Modus verhindert parallele Ausführungen
+mode: single
 
 trigger:
-  - platform: state
-    entity_id: !input grid_sensor
+  # Wir triggern NUR noch über die Zeit, um volle Kontrolle zu haben
   - platform: time_pattern
     seconds: "/1"
 
@@ -105,11 +105,11 @@ variables:
   deadband_val: !input deadband
 
 action:
-  # Robuste Intervall-Prüfung: Wir nutzen as_timestamp(now())
+  # Die Bedingung prüft nun hart gegen den Zeitstempel
   - condition: template
     value_template: >
       {% set last_run = as_timestamp(state_attr('automation.' ~ this.entity_id, 'last_triggered') | default('1970-01-01 00:00:00', true)) %}
-      {{ (as_timestamp(now()) - last_run) >= (interval_val | float) }}
+      {{ (as_timestamp(now()) - last_run) | round(0, 'floor') >= (interval_val | float) }}
 
   # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
