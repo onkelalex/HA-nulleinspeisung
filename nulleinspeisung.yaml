@@ -2,7 +2,7 @@ blueprint:
   name: Nulleinspeisung MS-A2
   description: >
     Präzise Nulleinspeisung für den MS-A2 mit Intervall-Garantie und Ganzzahl-Glättung. 
-    Version-ID: 202603121435
+    Version-ID: 202603121429
   domain: automation
   input:
     grid_sensor:
@@ -106,8 +106,7 @@ variables:
   deadband_val: !input deadband
 
 action:
-  # Intervall-Check: Wir prüfen, ob die aktuelle Sekunde ein Vielfaches des Intervalls ist
-  # Das ist wesentlich zuverlässiger als last_triggered
+  # Intervall-Check via Modulo (Sekunden-Takt)
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
@@ -151,7 +150,7 @@ action:
         {# Grenzen einhalten #}
         {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
         
-        {# Watchdog-Trick mit Ganzzahlen: Wir springen um 1 Watt, wenn der Wert gleich bleibt #}
+        {# Watchdog-Trick mit Ganzzahlen #}
         {% if (limited - current_limit | int) | abs < 1 %}
           {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
