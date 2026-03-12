@@ -1,8 +1,8 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Präzise Nulleinspeisung für den MS-A2 mit Intervall-Garantie und Totzone. 
-    Version-ID: 202603121425
+    Präzise Nulleinspeisung für den MS-A2 mit Intervall-Garantie und Ganzzahl-Glättung. 
+    Version-ID: 202603121435
   domain: automation
   input:
     grid_sensor:
@@ -88,7 +88,7 @@ blueprint:
           unit_of_measurement: s
           mode: slider
 
-mode: single
+mode: restart
 
 trigger:
   - platform: time_pattern
@@ -106,17 +106,19 @@ variables:
   deadband_val: !input deadband
 
 action:
+  # Intervall-Check: Wir prüfen, ob die aktuelle Sekunde ein Vielfaches des Intervalls ist
+  # Das ist wesentlich zuverlässiger als last_triggered
   - condition: template
-    value_template: >
-      {% set last_run = as_timestamp(state_attr('automation.' ~ this.entity_id, 'last_triggered') | default('1970-01-01 00:00:00', true)) %}
-      {{ (as_timestamp(now()) - last_run) | round(0, 'floor') >= (interval_val | float) }}
+    value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
+  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
@@ -130,19 +132,28 @@ action:
         {% set gain = gain_val | float %}
         {% set deadband = deadband_val | float %}
         {% set min_soc = min_soc_val | float %}
+        
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
           {% set effective_grid = grid_p - (deadband if grid_p > 0 else -deadband) %}
           {% set correction = effective_grid * gain %}
         {% endif %}
-        {% set raw_limit = (current_limit + correction) | round(1) %}
+        
+        {# Berechnung und Rundung auf ganze Watt (int) #}
+        {% set raw_limit = (current_limit + correction) | round(0) | int %}
+        
+        {# SoC Schutz #}
         {% if current_soc <= min_soc %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
-        {% set limited = ([max_chg, ([max_dis, raw_limit] | min)] | max) %}
-        {% if (limited - current_limit) | abs < 0.1 %}
-          {{ ((limited + 0.1) if limited < max_dis else (limited - 0.1)) | round(1) }}
+        
+        {# Grenzen einhalten #}
+        {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
+        
+        {# Watchdog-Trick mit Ganzzahlen: Wir springen um 1 Watt, wenn der Wert gleich bleibt #}
+        {% if (limited - current_limit | int) | abs < 1 %}
+          {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
-          {{ limited | round(1) }}
+          {{ limited | int }}
         {% endif %}
