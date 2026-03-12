@@ -1,8 +1,8 @@
 blueprint:
-  name: Nulleinspeisung MS-A2 (Ultra-Stable & Slider)
+  name: Nulleinspeisung MS-A2 (Ultra-Stable & Intervall-Fix)
   description: >
-    Maximale Stabilität durch einstellbare Totzone (Hysterese) und gedämpfte Regelung. 
-    Verhindert nervöses Hin- und Herspringen bei kleinen Lastwechseln.
+    Präzise Nulleinspeisung für den MS-A2. 
+    Hält das eingestellte Intervall nun garantiert ein.
   domain: automation
   input:
     grid_sensor:
@@ -39,7 +39,6 @@ blueprint:
           domain: number
     deadband:
       name: Totzone / Hysterese (Watt)
-      description: Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs.
       default: 20
       selector:
         number:
@@ -68,7 +67,6 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für Stabilität zwischen 0.1 und 0.3.
       default: 0.2
       selector:
         number:
@@ -78,7 +76,6 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Wie oft soll der Wert gesendet werden (1 bis 15s).
       default: 3
       selector:
         number:
@@ -108,17 +105,20 @@ variables:
   deadband_val: !input deadband
 
 action:
+  # Robuste Intervall-Prüfung: Wir nutzen as_timestamp(now())
   - condition: template
     value_template: >
-      {% set last_run = state_attr('automation.' ~ this.entity_id, 'last_triggered') %}
-      {{ last_run is none or (now() - last_run).total_seconds() >= interval_val | float }}
+      {% set last_run = as_timestamp(state_attr('automation.' ~ this.entity_id, 'last_triggered') | default('1970-01-01 00:00:00', true)) %}
+      {{ (as_timestamp(now()) - last_run) >= (interval_val | float) }}
 
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
+  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
