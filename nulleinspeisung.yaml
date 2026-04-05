@@ -1,9 +1,8 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Stabilisierte Nulleinspeisung mit Slew-Rate-Limit (Maximaler Sprung pro Schritt). 
-    Sorgt für eine ruhige Regelkurve ohne extremes Aufschwingen.
-    Version-ID: 202604051834
+    Optimierte Nulleinspeisung mit Sprung-Begrenzung zur Vermeidung von Schwingungen. 
+    Version-ID 202604051845
   domain: automation
   input:
     grid_sensor:
@@ -40,7 +39,7 @@ blueprint:
           mode: slider
     deadband:
       name: Totzone / Hysterese (Watt)
-      description: Schwankungen unter diesem Wert werden ignoriert (Empfehlung 30W).
+      description: Kleine Schwankungen ignorieren zum Beispiel 30W
       default: 30
       selector:
         number:
@@ -51,7 +50,7 @@ blueprint:
           mode: slider
     max_step:
       name: Maximaler Sprung (Watt)
-      description: Begrenzt die Laständerung pro Schritt (Empfehlung 100W bis 150W).
+      description: Begrenzt die Laständerung pro Schritt zum Beispiel 100W bis 150W
       default: 150
       selector:
         number:
@@ -80,7 +79,7 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für Stabilität zwischen 0.1 und 0.2.
+      description: Empfehlung für Stabilität zwischen 0.1 und 0.2
       default: 0.15
       selector:
         number:
@@ -90,7 +89,7 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Zeit zwischen zwei Befehlen (Empfehlung 4s bis 5s).
+      description: Zeit zwischen zwei Befehlen zum Beispiel 4s oder 5s
       default: 4
       selector:
         number:
@@ -119,18 +118,15 @@ variables:
   max_step_val: !input max_step
 
 action:
-  # Intervallprüfung
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
-  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
-  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
@@ -143,28 +139,23 @@ action:
         {% set deadband = deadband_val | float %}
         {% set max_step = max_step_val | float %}
         
-        {# Korrektur berechnen #}
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
           {% set correction = (grid_p * gain) %}
         {% endif %}
         
-        {# Sprung-Begrenzung (Slew Rate) #}
         {% set limited_corr = ([max_step * -1, ([max_step, correction] | min)] | max) %}
         {% set raw_limit = (current_limit + limited_corr) | round(0) | int %}
         
-        {# SoC Schutz #}
         {% if current_soc <= min_soc_val | float %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
-        {# Limits anwenden #}
         {% set max_chg = chg_val | float * -1 %}
         {% set max_dis = dis_val | float %}
         {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
         
-        {# Watchdog-Check #}
         {% if (limited - current_limit | int) | abs < 1 %}
           {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
