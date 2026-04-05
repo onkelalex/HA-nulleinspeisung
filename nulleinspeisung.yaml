@@ -3,7 +3,7 @@ blueprint:
   description: >
     Ultra-Stabile Nulleinspeisung gegen Oszillationen. 
     Optimiert für Tibber Pulse und ähnliche Cloud-Sensoren.
-    Version-ID: 202603121443
+    Version-ID: 202604051512
   domain: automation
   input:
     grid_sensor:
@@ -117,3 +117,43 @@ action:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
+
+  # 2. Wert berechnen und senden
+  - action: number.set_value
+    target:
+      entity_id: !input battery_power_limit_number
+    data:
+      value: >-
+        {% set grid_p = states(grid_ent) | float(0) %}
+        {% set current_soc = states(soc_ent) | float(0) %}
+        {% set current_limit = states(limit_ent) | float(0) %}
+        {% set max_chg = chg_val | float * -1 %}
+        {% set max_dis = dis_val | float %}
+        {% set gain = gain_val | float %}
+        {% set deadband = deadband_val | float %}
+        
+        {# Totzone Logik #}
+        {% if grid_p | abs < deadband %}
+          {% set correction = 0 %}
+        {% else %}
+          {% set correction = (grid_p * gain) %}
+        {% endif %}
+        
+        {# Berechnung und Rundung auf ganze Watt #}
+        {% set raw_limit = (current_limit + correction) | round(0) | int %}
+        
+        {# SoC Schutz: Entladung stoppen wenn SoC zu niedrig #}
+        {% if current_soc <= min_soc_val | float %}
+          {% set raw_limit = [0, raw_limit] | min %}
+        {% endif %}
+        
+        {# Harte Limits #}
+        {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
+        
+        {# Hysterese gegen Oszillation: Nur bei nennenswerter Änderung senden #}
+        {% if (limited - current_limit | int) | abs < 5 %}
+          {# Watchdog: Minimalen Impuls senden um Mode-Timeout zu verhindern #}
+          {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
+        {% else %}
+          {{ limited | int }}
+        {% endif %}
