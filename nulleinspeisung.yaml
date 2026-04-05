@@ -1,12 +1,11 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Ultra-Stabile Nulleinspeisung für den MS-A2. 
-    Nutzt gleitende Mittelwerte zur Reduzierung von Oszillationen.
-    Version-ID: 202603121434
+    Stabilisierte Nulleinspeisung mit Slew-Rate-Limit (Maximaler Sprung pro Schritt). 
+    Sorgt für eine ruhige Regelkurve ohne extremes Aufschwingen.
+    Version-ID: 202604051834
   domain: automation
   input:
-    # (Inputs bleiben gleich wie zuvor)
     grid_sensor:
       name: Netz-Sensor (Watt)
       selector:
@@ -19,16 +18,6 @@ blueprint:
         entity:
           domain: sensor
           device_class: battery
-    min_soc:
-      name: Minimum SoC (%)
-      default: 10
-      selector:
-        number:
-          min: 0
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-          mode: slider
     battery_mode_select:
       name: MS-A2 Modus Entität
       selector:
@@ -39,14 +28,36 @@ blueprint:
       selector:
         entity:
           domain: number
+    min_soc:
+      name: Minimum SoC (%)
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
     deadband:
       name: Totzone / Hysterese (Watt)
+      description: Schwankungen unter diesem Wert werden ignoriert (Empfehlung 30W).
       default: 30
       selector:
         number:
           min: 0
           max: 150
           step: 5
+          unit_of_measurement: W
+          mode: slider
+    max_step:
+      name: Maximaler Sprung (Watt)
+      description: Begrenzt die Laständerung pro Schritt (Empfehlung 100W bis 150W).
+      default: 150
+      selector:
+        number:
+          min: 10
+          max: 500
+          step: 10
           unit_of_measurement: W
           mode: slider
     max_charge_power:
@@ -57,6 +68,7 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     max_discharge_power:
       name: Max Entladeleistung (Watt)
       default: 800
@@ -65,18 +77,20 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Für Tibber/Pulse-User empfohlen: 0.1 bis 0.2.
+      description: Empfehlung für Stabilität zwischen 0.1 und 0.2.
       default: 0.15
       selector:
         number:
-          min: 0.01
+          min: 0.05
           max: 0.5
           step: 0.01
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
+      description: Zeit zwischen zwei Befehlen (Empfehlung 4s bis 5s).
       default: 4
       selector:
         number:
@@ -102,17 +116,21 @@ variables:
   interval_val: !input update_interval
   min_soc_val: !input min_soc
   deadband_val: !input deadband
+  max_step_val: !input max_step
 
 action:
+  # Intervallprüfung
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
+  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
@@ -121,32 +139,33 @@ action:
         {% set grid_p = states(grid_ent) | float(0) %}
         {% set current_soc = states(soc_ent) | float(0) %}
         {% set current_limit = states(limit_ent) | float(0) %}
-        {% set max_chg = chg_val | float * -1 %}
-        {% set max_dis = dis_val | float %}
         {% set gain = gain_val | float %}
         {% set deadband = deadband_val | float %}
+        {% set max_step = max_step_val | float %}
         
-        {# Filter: Wenn Wert in Totzone, keine Korrektur #}
+        {# Korrektur berechnen #}
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
-          {# Sanfte Annäherung #}
           {% set correction = (grid_p * gain) %}
         {% endif %}
         
-        {% set raw_limit = (current_limit + correction) | round(0) | int %}
+        {# Sprung-Begrenzung (Slew Rate) #}
+        {% set limited_corr = ([max_step * -1, ([max_step, correction] | min)] | max) %}
+        {% set raw_limit = (current_limit + limited_corr) | round(0) | int %}
         
         {# SoC Schutz #}
-        {% if current_soc <= min_soc_val|float %}
+        {% if current_soc <= min_soc_val | float %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
-        {# Grenzen #}
+        {# Limits anwenden #}
+        {% set max_chg = chg_val | float * -1 %}
+        {% set max_dis = dis_val | float %}
         {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
         
-        {# Hysterese gegen Zappeln: Nur senden wenn Änderung > 5W oder Watchdog #}
-        {% if (limited - current_limit | int) | abs < 5 %}
-          {# Watchdog-Zwangsmeldung alle X Sekunden falls Wert gleichbleibt #}
+        {# Watchdog-Check #}
+        {% if (limited - current_limit | int) | abs < 1 %}
           {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
           {{ limited | int }}
