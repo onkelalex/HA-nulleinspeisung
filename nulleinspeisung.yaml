@@ -1,9 +1,9 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Ultra-Stabile Nulleinspeisung gegen Oszillationen. 
-    Optimiert für Tibber Pulse und ähnliche Cloud-Sensoren.
-    Version-ID: 202604051512
+    Optimierte Nulleinspeisung für Tibber Local. 
+    Inklusive digitalem Filter zur Beruhigung von schnellen Zählerdaten.
+    Version-ID: 202604051515
   domain: automation
   input:
     grid_sensor:
@@ -40,13 +40,13 @@ blueprint:
           domain: number
     deadband:
       name: Totzone / Hysterese (Watt)
-      description: Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs.
-      default: 30
+      description: Schwankungen in diesem Bereich werden ignoriert.
+      default: 20
       selector:
         number:
           min: 0
-          max: 150
-          step: 5
+          max: 100
+          step: 1
           unit_of_measurement: W
           mode: slider
     max_charge_power:
@@ -69,22 +69,22 @@ blueprint:
           mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für Tibber oder Pulse Nutzer zwischen 0.1 und 0.2.
-      default: 0.15
+      description: Empfehlung für Tibber Local zwischen 0.2 und 0.4.
+      default: 0.3
       selector:
         number:
-          min: 0.01
-          max: 0.5
-          step: 0.01
+          min: 0.05
+          max: 1.0
+          step: 0.05
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Zeit zwischen zwei Befehlen an die Batterie.
-      default: 5
+      description: Empfehlung für Tibber Local auf 2 oder 3 Sekunden.
+      default: 2
       selector:
         number:
-          min: 2
-          max: 20
+          min: 1
+          max: 10
           step: 1
           unit_of_measurement: s
           mode: slider
@@ -107,7 +107,7 @@ variables:
   deadband_val: !input deadband
 
 action:
-  # Intervall-Garantie via Modulo
+  # Intervallprüfung
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
@@ -132,27 +132,26 @@ action:
         {% set gain = gain_val | float %}
         {% set deadband = deadband_val | float %}
         
-        {# Totzone Logik #}
+        {# Filter: Wenn Wert in Totzone, keine Korrektur #}
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
+          {# Tibber Local Korrektur #}
           {% set correction = (grid_p * gain) %}
         {% endif %}
         
-        {# Berechnung und Rundung auf ganze Watt #}
         {% set raw_limit = (current_limit + correction) | round(0) | int %}
         
-        {# SoC Schutz: Entladung stoppen wenn SoC zu niedrig #}
-        {% if current_soc <= min_soc_val | float %}
+        {# SoC Schutz #}
+        {% if current_soc <= min_soc_val|float %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
-        {# Harte Limits #}
+        {# Harte Grenzen #}
         {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
         
-        {# Hysterese gegen Oszillation: Nur bei nennenswerter Änderung senden #}
-        {% if (limited - current_limit | int) | abs < 5 %}
-          {# Watchdog: Minimalen Impuls senden um Mode-Timeout zu verhindern #}
+        {# Watchdog-Check fuer Ganzzahlen #}
+        {% if (limited - current_limit | int) | abs < 1 %}
           {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
           {{ limited | int }}
