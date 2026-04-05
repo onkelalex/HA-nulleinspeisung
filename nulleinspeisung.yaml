@@ -1,8 +1,8 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Optimierte Nulleinspeisung mit Sprung-Begrenzung zur Vermeidung von Schwingungen. 
-    Version-ID 202604051845
+    Stabilisierte Nulleinspeisung mit Sprung-Begrenzung und Out-of-Range Schutz. 
+    Version-ID 202604051859
   domain: automation
   input:
     grid_sensor:
@@ -50,7 +50,7 @@ blueprint:
           mode: slider
     max_step:
       name: Maximaler Sprung (Watt)
-      description: Begrenzt die Laständerung pro Schritt zum Beispiel 100W bis 150W
+      description: Begrenzt die Laständerung pro Schritt zum Beispiel 100W oder 150W
       default: 150
       selector:
         number:
@@ -135,29 +135,37 @@ action:
         {% set grid_p = states(grid_ent) | float(0) %}
         {% set current_soc = states(soc_ent) | float(0) %}
         {% set current_limit = states(limit_ent) | float(0) %}
-        {% set gain = gain_val | float %}
-        {% set deadband = deadband_val | float %}
-        {% set max_step = max_step_val | float %}
+        {% set max_chg = chg_val | float * -1 %}
+        {% set max_dis = dis_val | float %}
         
-        {% if grid_p | abs < deadband %}
+        {# 1. Korrektur berechnen #}
+        {% if grid_p | abs < deadband_val | float %}
           {% set correction = 0 %}
         {% else %}
-          {% set correction = (grid_p * gain) %}
+          {% set correction = (grid_p * gain_val | float) %}
         {% endif %}
         
-        {% set limited_corr = ([max_step * -1, ([max_step, correction] | min)] | max) %}
+        {# 2. Sprung-Begrenzung #}
+        {% set max_s = max_step_val | float %}
+        {% set limited_corr = ([max_s * -1, ([max_s, correction] | min)] | max) %}
         {% set raw_limit = (current_limit + limited_corr) | round(0) | int %}
         
+        {# 3. SoC Schutz #}
         {% if current_soc <= min_soc_val | float %}
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
-        {% set max_chg = chg_val | float * -1 %}
-        {% set max_dis = dis_val | float %}
-        {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
+        {# 4. Harte Grenzen (Finales Limit) #}
+        {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) | int %}
         
+        {# 5. Watchdog-Trick mit Bereichsprüfung (Out-of-Range Schutz) #}
         {% if (limited - current_limit | int) | abs < 1 %}
-          {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
+          {# Wenn Wert gleichbleibt, versuchen wir zu springen, bleiben aber IMMER im Bereich #}
+          {% if limited < max_dis %}
+            {{ (limited + 1) | int }}
+          {% else %}
+            {{ (limited - 1) | int }}
+          {% endif %}
         {% else %}
           {{ limited | int }}
         {% endif %}
