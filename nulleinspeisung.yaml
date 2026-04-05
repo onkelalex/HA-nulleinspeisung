@@ -1,11 +1,12 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Optimierte Nulleinspeisung für Tibber Local. 
-    Inklusive digitalem Filter zur Beruhigung von schnellen Zählerdaten.
-    Version-ID: 202604051515
+    Ultra-Stabile Nulleinspeisung für den MS-A2. 
+    Nutzt gleitende Mittelwerte zur Reduzierung von Oszillationen.
+    Version-ID: 202603121434
   domain: automation
   input:
+    # (Inputs bleiben gleich wie zuvor)
     grid_sensor:
       name: Netz-Sensor (Watt)
       selector:
@@ -40,13 +41,12 @@ blueprint:
           domain: number
     deadband:
       name: Totzone / Hysterese (Watt)
-      description: Schwankungen in diesem Bereich werden ignoriert.
-      default: 20
+      default: 30
       selector:
         number:
           min: 0
-          max: 100
-          step: 1
+          max: 150
+          step: 5
           unit_of_measurement: W
           mode: slider
     max_charge_power:
@@ -57,7 +57,6 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
-          mode: box
     max_discharge_power:
       name: Max Entladeleistung (Watt)
       default: 800
@@ -66,25 +65,23 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
-          mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Empfehlung für Tibber Local zwischen 0.2 und 0.4.
-      default: 0.3
+      description: Für Tibber/Pulse-User empfohlen: 0.1 bis 0.2.
+      default: 0.15
       selector:
         number:
-          min: 0.05
-          max: 1.0
-          step: 0.05
+          min: 0.01
+          max: 0.5
+          step: 0.01
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      description: Empfehlung für Tibber Local auf 2 oder 3 Sekunden.
-      default: 2
+      default: 4
       selector:
         number:
-          min: 1
-          max: 10
+          min: 2
+          max: 20
           step: 1
           unit_of_measurement: s
           mode: slider
@@ -107,18 +104,15 @@ variables:
   deadband_val: !input deadband
 
 action:
-  # Intervallprüfung
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
-  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
 
-  # 2. Wert berechnen und senden
   - action: number.set_value
     target:
       entity_id: !input battery_power_limit_number
@@ -136,7 +130,7 @@ action:
         {% if grid_p | abs < deadband %}
           {% set correction = 0 %}
         {% else %}
-          {# Tibber Local Korrektur #}
+          {# Sanfte Annäherung #}
           {% set correction = (grid_p * gain) %}
         {% endif %}
         
@@ -147,11 +141,12 @@ action:
           {% set raw_limit = [0, raw_limit] | min %}
         {% endif %}
         
-        {# Harte Grenzen #}
+        {# Grenzen #}
         {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
         
-        {# Watchdog-Check fuer Ganzzahlen #}
-        {% if (limited - current_limit | int) | abs < 1 %}
+        {# Hysterese gegen Zappeln: Nur senden wenn Änderung > 5W oder Watchdog #}
+        {% if (limited - current_limit | int) | abs < 5 %}
+          {# Watchdog-Zwangsmeldung alle X Sekunden falls Wert gleichbleibt #}
           {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
         {% else %}
           {{ limited | int }}
