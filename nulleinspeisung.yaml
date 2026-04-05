@@ -1,12 +1,11 @@
 blueprint:
   name: Nulleinspeisung MS-A2
   description: >
-    Ultra-Stabile Nulleinspeisung für den MS-A2. 
-    Nutzt gleitende Mittelwerte zur Reduzierung von Oszillationen.
-    Version-ID: 202603121434
+    Ultra-Stabile Nulleinspeisung gegen Oszillationen. 
+    Optimiert für Tibber Pulse und ähnliche Cloud-Sensoren.
+    Version-ID: 202603121443
   domain: automation
   input:
-    # (Inputs bleiben gleich wie zuvor)
     grid_sensor:
       name: Netz-Sensor (Watt)
       selector:
@@ -41,6 +40,7 @@ blueprint:
           domain: number
     deadband:
       name: Totzone / Hysterese (Watt)
+      description: Ignoriert Schwankungen am Netz-Sensor innerhalb dieses Bereichs.
       default: 30
       selector:
         number:
@@ -57,6 +57,7 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     max_discharge_power:
       name: Max Entladeleistung (Watt)
       default: 800
@@ -65,9 +66,10 @@ blueprint:
           min: 0
           max: 2000
           unit_of_measurement: W
+          mode: box
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Für Tibber/Pulse-User empfohlen 0.1 bis 0.2.
+      description: Empfehlung für Tibber oder Pulse Nutzer zwischen 0.1 und 0.2.
       default: 0.15
       selector:
         number:
@@ -77,7 +79,8 @@ blueprint:
           mode: slider
     update_interval:
       name: Regel-Intervall (Sekunden)
-      default: 4
+      description: Zeit zwischen zwei Befehlen an die Batterie.
+      default: 5
       selector:
         number:
           min: 2
@@ -104,50 +107,13 @@ variables:
   deadband_val: !input deadband
 
 action:
+  # Intervall-Garantie via Modulo
   - condition: template
     value_template: "{{ (as_timestamp(now()) | int) % (interval_val | int) == 0 }}"
 
+  # 1. Modus auf 'mqtt_ctrl' erzwingen
   - action: select.select_option
     target:
       entity_id: !input battery_mode_select
     data:
       option: "mqtt_ctrl"
-
-  - action: number.set_value
-    target:
-      entity_id: !input battery_power_limit_number
-    data:
-      value: >-
-        {% set grid_p = states(grid_ent) | float(0) %}
-        {% set current_soc = states(soc_ent) | float(0) %}
-        {% set current_limit = states(limit_ent) | float(0) %}
-        {% set max_chg = chg_val | float * -1 %}
-        {% set max_dis = dis_val | float %}
-        {% set gain = gain_val | float %}
-        {% set deadband = deadband_val | float %}
-        
-        {# Filter: Wenn Wert in Totzone, keine Korrektur #}
-        {% if grid_p | abs < deadband %}
-          {% set correction = 0 %}
-        {% else %}
-          {# Sanfte Annäherung #}
-          {% set correction = (grid_p * gain) %}
-        {% endif %}
-        
-        {% set raw_limit = (current_limit + correction) | round(0) | int %}
-        
-        {# SoC Schutz #}
-        {% if current_soc <= min_soc_val|float %}
-          {% set raw_limit = [0, raw_limit] | min %}
-        {% endif %}
-        
-        {# Grenzen #}
-        {% set limited = ([max_chg | int, ([max_dis | int, raw_limit] | min)] | max) %}
-        
-        {# Hysterese gegen Zappeln: Nur senden wenn Änderung > 5W oder Watchdog #}
-        {% if (limited - current_limit | int) | abs < 5 %}
-          {# Watchdog-Zwangsmeldung alle X Sekunden falls Wert gleichbleibt #}
-          {{ ((limited + 1) if limited < max_dis else (limited - 1)) | int }}
-        {% else %}
-          {{ limited | int }}
-        {% endif %}
