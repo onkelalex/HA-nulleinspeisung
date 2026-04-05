@@ -67,7 +67,7 @@ blueprint:
           unit_of_measurement: W
     control_gain:
       name: Dämpfungsfaktor (Regler)
-      description: Für Tibber/Pulse-User empfohlen: 0.1 bis 0.2.
+      description: Für Tibber/Pulse-User empfohlen 0.1 bis 0.2.
       default: 0.15
       selector:
         number:
